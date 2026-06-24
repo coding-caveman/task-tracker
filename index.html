@@ -229,6 +229,18 @@
       .btn-icon.today-on { color: var(--warn); }
       .drag-note { margin-bottom: 12px; }
 
+      /* Compact, single-screen add/edit form */
+      .form-compact { padding: 14px; }
+      .form-fields { display: flex; flex-direction: column; gap: 10px; }
+      .form-row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; } /* stays 2-up on mobile */
+      .extra-toggle { align-self: flex-start; gap: 5px; }
+      .form-compact textarea { min-height: 44px; }
+      @media (max-width: 540px) {
+        .form-compact { padding: 12px; }
+        .form-fields { gap: 8px; }
+        label.field { font-size: 10px; }
+      }
+
       /* Installed-app (home screen) safe areas — clear the notch / status bar / home indicator */
       @media (display-mode: standalone) {
         header.top { padding-top: calc(16px + env(safe-area-inset-top)); }
@@ -450,8 +462,8 @@
 
       function openCreate() {
         state.editingId = null;
-        state.draft = { project: "", date_received: todayIso(), due_date: "", next_action: "", source: "", status: "open", priority: "normal", notes: "", subtasks: [] };
-        state.showForm = true; state.formError = ""; render();
+        state.draft = { project: "", date_received: todayIso(), due_date: "", next_action: "", source: "", status: "open", priority: "normal", notes: "", subtasks: [], _extra: false };
+        state.showForm = true; state.formError = ""; render(); window.scrollTo(0, 0);
       }
       function openEdit(t) {
         state.editingId = t.id;
@@ -459,8 +471,9 @@
           project: t.project, date_received: t.date_received, due_date: t.due_date || "", next_action: t.next_action,
           source: t.source || "", status: t.status, priority: t.priority, notes: t.notes || "",
           subtasks: (t.subtasks || []).map(function (s) { return { id: s.id, text: s.text, done: !!s.done }; }),
+          _extra: (t.subtasks && t.subtasks.length > 0) || !!t.notes, // reveal extras if the task already has them
         };
-        state.showForm = true; state.formError = ""; render();
+        state.showForm = true; state.formError = ""; render(); window.scrollTo(0, 0);
       }
       function closeForm() { state.showForm = false; state.editingId = null; state.draft = null; state.formError = ""; render(); }
 
@@ -662,7 +675,8 @@
         else if (notifSupported()) kids.push(el("button", { class: "btn btn-outline btn-sm", onclick: enableReminders }, [icon(IC.bell), "Enable reminders"]));
         kids.push(el("button", { class: "btn btn-ghost btn-sm", title: "Export a JSON backup", onclick: exportJson }, [icon(IC.download), "Export"]));
         kids.push(el("button", { class: "btn btn-ghost btn-sm", title: "Import a JSON backup (merges)", onclick: function () { document.getElementById("import-input").click(); } }, [icon(IC.upload), "Import"]));
-        if (!window.desktopAPI) {
+        // Only offer Pop out where the always-on-top API exists (desktop Chrome/Edge); hides it on iOS.
+        if (!window.desktopAPI && window.documentPictureInPicture) {
           if (state.pip.open) kids.push(el("button", { class: "btn btn-outline btn-sm", title: "Close the floating window", onclick: closePip }, [icon(IC.target), "Bring back"]));
           else kids.push(el("button", { class: "btn btn-ghost btn-sm", title: "Float the tracker on top of other windows", onclick: popOut }, [icon(IC.popout), "Pop out"]));
         }
@@ -747,24 +761,31 @@
         var nextInput = fieldInput("next_action", "text"); nextInput.placeholder = "The very next thing to do";
         var fromInput = fieldInput("source", "text"); fromInput.placeholder = "Who it came from";
 
-        var stContainer = el("div", { class: "st-editor" }, []);
-        state.draft.subtasks.forEach(function (s) { stContainer.appendChild(subtaskRow(stContainer, s)); });
-        var addStep = el("button", { type: "button", class: "btn btn-ghost btn-sm", onclick: function () {
-          var st = { id: uid(), text: "", done: false }; state.draft.subtasks.push(st);
-          var row = subtaskRow(stContainer, st); stContainer.appendChild(row); var inp = row.querySelector("input"); if (inp) inp.focus();
-        } }, [icon(IC.plus), "Add step"]);
+        // Compact, single-screen layout: short fields share rows (stay 2-up on mobile);
+        // the bulky Steps + Notes stay collapsed until requested.
+        var rows = [
+          labeled("Project", projectInput),
+          labeled("Next action", nextInput),
+          el("div", { class: "form-row2" }, [labeled("Date received", fieldInput("date_received", "date")), labeled("Due date", fieldInput("due_date", "date"))]),
+          el("div", { class: "form-row2" }, [labeled("Priority", fieldSelect("priority", PRIORITY)), labeled("Status", fieldSelect("status", STATUS))]),
+          labeled("From", fromInput),
+        ];
 
-        var form = el("form", { class: "card", onsubmit: function (e) { e.preventDefault(); submitForm(); } }, [
-          el("div", { class: "grid" }, [
-            labeled("Project", projectInput, true),
-            labeled("Next action", nextInput, true),
-            labeled("From", fromInput),
-            labeled("Date received", fieldInput("date_received", "date")),
-            labeled("Due date", fieldInput("due_date", "date")),
-            el("div", { class: "grid" }, [labeled("Priority", fieldSelect("priority", PRIORITY)), labeled("Status", fieldSelect("status", STATUS))]),
-            labeled("Steps (optional checklist)", el("div", {}, [stContainer, addStep]), true),
-            labeled("Notes", fieldInput("notes", "textarea"), true),
-          ]),
+        if (state.draft._extra) {
+          var stContainer = el("div", { class: "st-editor" }, []);
+          state.draft.subtasks.forEach(function (s) { stContainer.appendChild(subtaskRow(stContainer, s)); });
+          var addStep = el("button", { type: "button", class: "btn btn-ghost btn-sm", onclick: function () {
+            var st = { id: uid(), text: "", done: false }; state.draft.subtasks.push(st);
+            var row = subtaskRow(stContainer, st); stContainer.appendChild(row); var inp = row.querySelector("input"); if (inp) inp.focus();
+          } }, [icon(IC.plus), "Add step"]);
+          rows.push(labeled("Steps (optional checklist)", el("div", {}, [stContainer, addStep])));
+          rows.push(labeled("Notes", fieldInput("notes", "textarea")));
+        } else {
+          rows.push(el("button", { type: "button", class: "link-btn extra-toggle", onclick: function () { state.draft._extra = true; render(); } }, [icon(IC.plus), "Add steps & notes"]));
+        }
+
+        var form = el("form", { class: "card form-compact", onsubmit: function (e) { e.preventDefault(); submitForm(); } }, [
+          el("div", { class: "form-fields" }, rows),
           el("div", { class: "form-hint" }, [state.formError]),
           el("div", { class: "form-actions" }, [
             el("button", { type: "button", class: "btn btn-ghost btn-sm", onclick: closeForm }, ["Cancel"]),
@@ -884,13 +905,24 @@
 
       function render() {
         renderHeaderActions();
+        // While adding/editing, the form takes over the screen (no quick-add/banner/focus/list
+        // competing for space) so it fits one mobile screen with no scrolling.
+        var qa = document.getElementById("quickadd"); if (qa) qa.style.display = state.showForm ? "none" : "";
+        if (state.showForm) {
+          document.getElementById("banner-slot").innerHTML = "";
+          document.getElementById("focus-slot").innerHTML = "";
+          var appForm = document.getElementById("app"); appForm.innerHTML = "";
+          appForm.appendChild(renderForm());
+          document.getElementById("foot").textContent = "";
+          syncPip(); renderModal();
+          return;
+        }
         renderBanner();
         renderFocus();
         var app = document.getElementById("app"); app.innerHTML = "";
         if (state.pip.open) {
           app.appendChild(el("div", { class: "banner warn" }, [icon(IC.popout), el("span", {}, ["Floating in a pop-out window. ", el("button", { class: "link-btn", onclick: closePip }, ["Bring back"])])]));
         }
-        if (state.showForm) app.appendChild(renderForm());
 
         var stats = renderStats(); if (stats) app.appendChild(stats);
 
