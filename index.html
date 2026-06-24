@@ -1,0 +1,1055 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Task Tracker</title>
+    <!-- Installable PWA hooks (inert when opened as a local file; active when hosted). -->
+    <meta name="theme-color" content="#0b1116" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Tasks" />
+    <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <!--
+      Standalone, self-contained task tracker. Double-click to open in a browser.
+      No server, no install, no internet. Tasks are saved in this browser's local
+      storage; use Export / Import to move them between computers.
+
+      "Stay on task" features: Focus mode + a check-in loop that nudges you on an
+      interval, subtasks/checklist, and a completion streak. Keep this pinned in a
+      tab so the check-ins can reach you.
+    -->
+    <style>
+      :root {
+        --base: #0b1116;
+        --raised: #121b22;
+        --overlay: #18242d;
+        --line: #23323d;
+        --ink: #e8eef3;
+        --muted: #93a4b2;
+        --faint: #5e6f7c;
+        --primary: #45d3c4;
+        --primary-ink: #06231f;
+        --ok: #5ccf8e;
+        --warn: #e6b450;
+        --error: #e8736b;
+        --mono: "JetBrains Mono", "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
+        --radius: 6px;
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; }
+      body {
+        margin: 0;
+        background: var(--base);
+        color: var(--ink);
+        font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+        -webkit-font-smoothing: antialiased;
+        font-size: 14px;
+        line-height: 1.45;
+      }
+      :focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 2px; }
+      .wrap { max-width: 760px; margin: 0 auto; padding: 0 16px 64px; }
+
+      header.top {
+        position: sticky; top: 0; z-index: 5;
+        background: linear-gradient(var(--base), color-mix(in srgb, var(--base) 88%, transparent));
+        backdrop-filter: blur(6px);
+        border-bottom: 1px solid var(--line);
+        padding: 16px 0 14px;
+        margin-bottom: 18px;
+      }
+      .title-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+      h1 { font-size: 20px; font-weight: 650; letter-spacing: -0.01em; margin: 0; }
+      .subtitle { color: var(--muted); font-size: 13px; margin: 2px 0 0; }
+      .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+      button {
+        font: inherit; cursor: pointer; border-radius: var(--radius);
+        border: 1px solid transparent; transition: background-color .12s, border-color .12s, color .12s;
+        display: inline-flex; align-items: center; gap: 6px; user-select: none;
+      }
+      .btn { height: 34px; padding: 0 14px; font-weight: 550; font-size: 13px; }
+      .btn-sm { height: 30px; padding: 0 11px; font-size: 12.5px; }
+      .btn-primary { background: var(--primary); color: var(--primary-ink); }
+      .btn-primary:hover { background: color-mix(in srgb, var(--primary) 90%, black); }
+      .btn-outline { background: transparent; border-color: var(--line); color: var(--ink); }
+      .btn-outline:hover { border-color: color-mix(in srgb, var(--primary) 60%, transparent); background: color-mix(in srgb, var(--overlay) 60%, transparent); }
+      .btn-ghost { background: transparent; color: var(--muted); }
+      .btn-ghost:hover { color: var(--ink); background: var(--overlay); }
+      .btn-icon { height: 32px; width: 32px; padding: 0; justify-content: center; background: transparent; color: var(--muted); }
+      .btn-icon:hover { color: var(--ink); background: var(--overlay); }
+      .btn-icon.active { color: var(--primary); }
+      button:disabled { opacity: .5; pointer-events: none; }
+
+      .banner { display: flex; align-items: center; gap: 10px; padding: 11px 14px; border-radius: var(--radius); border: 1px solid; margin-bottom: 16px; font-size: 13px; }
+      .banner.error { border-color: color-mix(in srgb, var(--error) 50%, transparent); background: color-mix(in srgb, var(--error) 12%, transparent); color: var(--error); }
+      .banner.warn { border-color: color-mix(in srgb, var(--warn) 50%, transparent); background: color-mix(in srgb, var(--warn) 12%, transparent); color: var(--warn); }
+      .banner b { font-weight: 650; }
+
+      /* Focus command panel */
+      .focus { border: 1px solid color-mix(in srgb, var(--primary) 45%, var(--line)); background:
+        linear-gradient(color-mix(in srgb, var(--primary) 7%, var(--raised)), var(--raised)); border-radius: var(--radius); padding: 18px; margin-bottom: 18px; }
+      .focus-label { display: flex; align-items: center; gap: 7px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--primary); font-weight: 600; }
+      .focus-title { font-size: 18px; font-weight: 650; margin: 8px 0 2px; }
+      .focus-next { color: var(--muted); margin: 0 0 12px; }
+      .focus-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+      .countdown { font-family: var(--mono); font-size: 13px; color: var(--ink); }
+      .countdown .num { color: var(--primary); }
+      .focus-controls { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+      .interval-ctl { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--faint); }
+      .interval-ctl input { width: 56px; padding: 5px 7px; font-family: var(--mono); }
+      .pill-progress { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+
+      /* Stats strip */
+      .stats { display: flex; gap: 16px; align-items: center; margin-bottom: 12px; font-size: 12.5px; color: var(--muted); }
+      .stats .fire { color: var(--warn); font-weight: 600; }
+      .stats .done { color: var(--ok); font-weight: 600; }
+
+      .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+      .count { color: var(--faint); font-size: 12px; }
+      .link-btn { background: none; color: var(--muted); font-size: 12px; padding: 2px 4px; }
+      .link-btn:hover { color: var(--ink); }
+
+      form.card, .empty, .task { background: var(--raised); border: 1px solid var(--line); border-radius: var(--radius); }
+      form.card { padding: 18px; margin-bottom: 18px; }
+      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+      .col-2 { grid-column: 1 / -1; }
+      label.field { display: flex; flex-direction: column; gap: 5px; font-size: 11px; color: var(--faint); letter-spacing: .02em; text-transform: uppercase; }
+      input, textarea, select {
+        font: inherit; width: 100%; color: var(--ink); background: var(--overlay);
+        border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px; font-size: 14px;
+      }
+      input:focus, textarea:focus, select:focus { outline: none; border-color: color-mix(in srgb, var(--primary) 60%, transparent); }
+      textarea { resize: vertical; min-height: 56px; }
+      input[type="date"] { font-family: var(--mono); }
+      .form-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+      .form-hint { color: var(--error); font-size: 12px; margin-top: 10px; min-height: 1px; }
+
+      /* Subtask editor (in form) */
+      .st-editor { display: flex; flex-direction: column; gap: 7px; }
+      .st-row { display: flex; gap: 7px; align-items: center; }
+      .st-row input { flex: 1; }
+
+      ul.list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+      .task { padding: 14px; display: flex; gap: 12px; align-items: flex-start; }
+      .task.due-error { border-color: color-mix(in srgb, var(--error) 50%, transparent); }
+      .task.due-warn { border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
+      .task.focused { border-color: color-mix(in srgb, var(--primary) 55%, transparent); }
+      .task.done { opacity: .6; }
+      .check {
+        margin-top: 1px; height: 20px; width: 20px; flex: 0 0 auto; border-radius: 5px;
+        border: 1px solid var(--line); background: transparent; color: transparent; justify-content: center;
+      }
+      .check:hover { border-color: color-mix(in srgb, var(--primary) 60%, transparent); }
+      .check.on { border-color: var(--ok); background: color-mix(in srgb, var(--ok) 20%, transparent); color: var(--ok); }
+      .task-body { min-width: 0; flex: 1; }
+      .task-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+      .task-title { font-weight: 600; color: var(--ink); }
+      .task.done .task-title, .task.done .next { text-decoration: line-through; }
+      .next { color: var(--muted); margin: 4px 0 0; }
+      .meta { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; font-size: 11px; color: var(--faint); font-family: var(--mono); }
+      .notes { color: var(--muted); font-size: 12.5px; margin: 8px 0 0; white-space: pre-wrap; }
+      .row-actions { display: flex; gap: 2px; flex: 0 0 auto; }
+
+      /* Subtask checklist (in card) */
+      .st-list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+      .st-item { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+      .st-box { height: 16px; width: 16px; flex: 0 0 auto; border-radius: 4px; border: 1px solid var(--line); background: transparent; color: transparent; justify-content: center; }
+      .st-box.on { border-color: var(--ok); background: color-mix(in srgb, var(--ok) 20%, transparent); color: var(--ok); }
+      .st-item.done span { text-decoration: line-through; color: var(--faint); }
+      .st-alldone { margin-top: 8px; }
+
+      .badge { display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; padding: 2px 9px; font-size: 11px; font-weight: 550; }
+      .badge .dot { height: 6px; width: 6px; border-radius: 999px; }
+      .badge.neutral { background: var(--overlay); color: var(--muted); } .badge.neutral .dot { background: var(--faint); }
+      .badge.ok { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); } .badge.ok .dot { background: var(--ok); }
+      .badge.warn { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); } .badge.warn .dot { background: var(--warn); }
+      .badge.error { background: color-mix(in srgb, var(--error) 15%, transparent); color: var(--error); } .badge.error .dot { background: var(--error); }
+      .badge.primary { background: color-mix(in srgb, var(--primary) 15%, transparent); color: var(--primary); } .badge.primary .dot { background: var(--primary); }
+
+      .empty { padding: 44px 16px; text-align: center; color: var(--muted); border-style: dashed; }
+      .empty button { margin-top: 12px; }
+      footer.foot { margin-top: 22px; text-align: center; color: var(--faint); font-size: 11px; }
+      svg.ic { width: 15px; height: 15px; flex: 0 0 auto; }
+      @media (max-width: 540px) { .grid { grid-template-columns: 1fr; } h1 { font-size: 18px; } .focus-controls { margin-left: 0; } }
+
+      /* Check-in modal */
+      .overlay { position: fixed; inset: 0; z-index: 50; background: rgba(4, 8, 11, .68); display: flex; align-items: center; justify-content: center; padding: 16px; }
+      .modal { width: 100%; max-width: 440px; background: var(--raised); border: 1px solid color-mix(in srgb, var(--primary) 40%, var(--line)); border-radius: 10px; padding: 22px; box-shadow: 0 20px 60px rgba(0,0,0,.5); }
+      .modal h2 { font-size: 17px; margin: 0 0 4px; }
+      .modal .ck-task { color: var(--primary); font-weight: 600; }
+      .modal p { color: var(--muted); margin: 0 0 16px; font-size: 13px; }
+      .ck-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+      .ck-actions .btn { width: 100%; justify-content: center; }
+      .ck-sub { margin-top: 14px; }
+      .ck-sub .row { display: flex; gap: 8px; }
+      .ck-snooze { display: flex; gap: 8px; margin-top: 12px; }
+
+      /* Pop-out (Picture-in-Picture) mini view */
+      .pip-body { margin: 0; padding: 12px; background: var(--base); color: var(--ink); }
+      #pip-root { display: flex; flex-direction: column; gap: 10px; height: 100%; }
+      .mini-focus { border: 1px solid color-mix(in srgb, var(--primary) 45%, var(--line)); background: linear-gradient(color-mix(in srgb, var(--primary) 7%, var(--raised)), var(--raised)); border-radius: var(--radius); padding: 12px; }
+      .mini-title { font-weight: 650; font-size: 15px; margin-top: 6px; }
+      .mini-next { color: var(--muted); font-size: 12.5px; margin: 2px 0 0; }
+      .mini-btns { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+      .mini-empty { color: var(--muted); font-size: 13px; padding: 12px; border: 1px dashed var(--line); border-radius: var(--radius); text-align: center; }
+      .mini-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; overflow: auto; }
+      .mini-row { display: flex; align-items: center; gap: 8px; background: var(--raised); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px; }
+      .mini-row.on { border-color: color-mix(in srgb, var(--primary) 55%, transparent); }
+      .mini-row-title { flex: 1; min-width: 0; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+      /* Desktop app (Electron) custom title bar — shown only when window.desktopAPI exists */
+      #appbar { display: none; }
+      .is-desktop { overflow: hidden; }
+      .is-desktop #appbar {
+        display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 6px 0 12px;
+        -webkit-app-region: drag; /* drag the window by this strip */
+        background: var(--raised); border-bottom: 1px solid var(--line);
+        position: sticky; top: 0; z-index: 10;
+      }
+      #appbar .title { font-size: 12px; font-weight: 600; letter-spacing: .04em; color: var(--muted); }
+      #appbar .spacer { flex: 1; }
+      .winbtn { -webkit-app-region: no-drag; height: 26px; width: 32px; justify-content: center; background: transparent; color: var(--muted); border-radius: 5px; }
+      .winbtn:hover { background: var(--overlay); color: var(--ink); }
+      .winbtn.pinned { color: var(--primary); }
+      .winbtn.close:hover { background: var(--error); color: #fff; }
+      /* In the app, the in-page "Pop out" makes no sense (the whole app floats). */
+      .is-desktop header.top { top: 34px; }
+
+      /* Quick-add bar */
+      .qa-bar { display: flex; gap: 8px; margin: 0 0 14px; }
+      .qa-input { flex: 1; }
+      /* Today / All view toggle */
+      .viewtoggle { display: inline-flex; background: var(--overlay); border: 1px solid var(--line); border-radius: var(--radius); padding: 2px; gap: 2px; }
+      .seg { background: transparent; color: var(--muted); height: 26px; padding: 0 12px; border-radius: 4px; font-size: 12.5px; font-weight: 550; }
+      .seg.on { background: var(--raised); color: var(--ink); }
+      .seg:hover:not(.on) { color: var(--ink); }
+      .btn-icon.today-on { color: var(--warn); }
+      .drag-note { margin-bottom: 12px; }
+
+      /* Installed-app (home screen) safe areas — clear the notch / status bar / home indicator */
+      @media (display-mode: standalone) {
+        header.top { padding-top: calc(16px + env(safe-area-inset-top)); }
+        .wrap { padding-left: calc(16px + env(safe-area-inset-left)); padding-right: calc(16px + env(safe-area-inset-right)); padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="appbar"></div>
+    <div class="wrap">
+      <header class="top">
+        <div class="title-row">
+          <div>
+            <h1>Task Tracker</h1>
+            <p class="subtitle">Pin this tab and pick a focus — it'll check in so you finish what you start.</p>
+          </div>
+          <div class="actions" id="header-actions"></div>
+        </div>
+      </header>
+      <div id="quickadd"></div>
+      <div id="banner-slot"></div>
+      <div id="focus-slot"></div>
+      <div id="app"></div>
+      <footer class="foot" id="foot"></footer>
+    </div>
+    <div id="modal-slot"></div>
+    <input id="import-input" type="file" accept="application/json,.json" hidden />
+
+    <script>
+      "use strict";
+
+      // ---- Constants ---------------------------------------------------------
+      var STORAGE_KEY = "geo-task-tracker/v1";
+      var NOTIFIED_KEY = "geo-task-tracker/notified";
+      var FOCUS_KEY = "geo-task-tracker/focus";
+      var SETTINGS_KEY = "geo-task-tracker/settings";
+      var LOG_KEY = "geo-task-tracker/log";
+      var MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+      var STATUS = [
+        { v: "open", l: "Open", tone: "neutral" },
+        { v: "in_progress", l: "In progress", tone: "warn" },
+        { v: "blocked", l: "Blocked", tone: "error" },
+        { v: "done", l: "Done", tone: "ok" },
+      ];
+      var PRIORITY = [{ v: "low", l: "Low" }, { v: "normal", l: "Normal" }, { v: "high", l: "High" }];
+      var DEFAULTS = { checkinMins: 45, checkinOn: true };
+
+      // ---- Tiny DOM helper ---------------------------------------------------
+      function el(tag, props, children) {
+        var node = document.createElement(tag);
+        props = props || {};
+        Object.keys(props).forEach(function (k) {
+          var v = props[k];
+          if (v === null || v === undefined || v === false) return;
+          if (k === "class") node.className = v;
+          else if (k === "text") node.textContent = v;
+          else if (k === "html") node.innerHTML = v; // trusted inline icons only
+          else if (k.indexOf("on") === 0 && typeof v === "function") node.addEventListener(k.slice(2).toLowerCase(), v);
+          else node.setAttribute(k, v);
+        });
+        (children || []).forEach(function (c) {
+          if (c === null || c === undefined || c === false) return;
+          node.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
+        });
+        return node;
+      }
+      function icon(d) { return el("span", { class: "ic-wrap", html: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + d + "</svg>" }); }
+      var IC = {
+        plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
+        check: '<polyline points="20 6 9 17 4 12"/>',
+        pencil: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
+        trash: '<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
+        download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
+        upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>',
+        bell: '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/>',
+        alert: '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+        target: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/>',
+        x: '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
+        popout: '<path d="M21 11V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h6"/><rect x="13" y="13" width="8" height="6" rx="1"/>',
+        star: '<polygon points="12 2 15.1 8.6 22 9.3 17 14.1 18.2 21 12 17.8 5.8 21 7 14.1 2 9.3 8.9 8.6 12 2"/>',
+        shuffle: '<polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/>',
+      };
+
+      // ---- State + persistence ----------------------------------------------
+      var state = {
+        tasks: [], hideCompleted: true, showForm: false, editingId: null, draft: null, formError: "",
+        view: "all", // "all" | "today"
+        focusId: null, settings: { checkinMins: 45, checkinOn: true },
+        checkin: { nextAt: 0, snoozeUntil: 0, modalOpen: false, stuckOpen: false, snoozeOpen: false },
+        pip: { open: false, win: null },
+      };
+      var titleFlash = null;
+      var origTitle = "Task Tracker";
+
+      function readJson(key, fallback) { try { var r = localStorage.getItem(key); return r ? JSON.parse(r) : fallback; } catch (e) { return fallback; } }
+      function writeJson(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) {} }
+
+      function load() {
+        state.tasks = readJson(STORAGE_KEY, []);
+        if (!Array.isArray(state.tasks)) state.tasks = [];
+        // Migrate: ensure every task has a subtasks array.
+        state.tasks.forEach(function (t) { if (!Array.isArray(t.subtasks)) t.subtasks = []; });
+        state.settings = Object.assign({}, DEFAULTS, readJson(SETTINGS_KEY, {}));
+        state.focusId = readJson(FOCUS_KEY, null);
+        if (state.focusId && !state.tasks.some(function (t) { return t.id === state.focusId; })) state.focusId = null;
+      }
+      function save() {
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state.tasks)); }
+        catch (e) { alert("Couldn't save — this browser may be blocking local storage for files. Use Export to keep a backup."); }
+      }
+      function saveSettings() { writeJson(SETTINGS_KEY, state.settings); }
+      function saveFocus() { writeJson(FOCUS_KEY, state.focusId); }
+      function loadLog() { var l = readJson(LOG_KEY, []); return Array.isArray(l) ? l : []; }
+      function saveLog(l) { writeJson(LOG_KEY, l); }
+
+      function uid() {
+        try { if (crypto && crypto.randomUUID) return crypto.randomUUID(); } catch (e) {}
+        return "id-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+      }
+
+      // ---- Date helpers ------------------------------------------------------
+      function todayIso() { var d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); }
+      function isoOf(date) { return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 10); }
+      function fmtDate(iso) { if (!iso) return "—"; var p = iso.split("-"); return MONTHS[Number(p[1]) - 1] + " " + Number(p[2]); }
+      function dueInfo(iso) {
+        if (!iso) return null;
+        var p = iso.split("-");
+        var due = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+        var n = new Date(); var today = new Date(n.getFullYear(), n.getMonth(), n.getDate());
+        var days = Math.round((due.getTime() - today.getTime()) / 86400000);
+        if (days < 0) return { tone: "error", label: days === -1 ? "1 day overdue" : -days + " days overdue", overdue: true };
+        if (days === 0) return { tone: "warn", label: "Due today", soon: true };
+        if (days === 1) return { tone: "warn", label: "Due tomorrow", soon: true };
+        if (days <= 3) return { tone: "warn", label: "Due in " + days + " days", soon: true };
+        return { tone: "neutral", label: "Due " + fmtDate(iso) };
+      }
+      function statusMeta(v) { for (var i = 0; i < STATUS.length; i++) if (STATUS[i].v === v) return STATUS[i]; return STATUS[0]; }
+
+      // ---- Completion log (streak + weekly count) ---------------------------
+      function logCompletion(task) { var log = loadLog(); log.push({ id: task.id, project: task.project, at: new Date().toISOString() }); saveLog(log); }
+      function completionDays() {
+        var set = {}; loadLog().forEach(function (e) { try { set[isoOf(new Date(e.at))] = true; } catch (x) {} }); return set;
+      }
+      function currentStreak() {
+        var days = completionDays(); var d = new Date(); d.setHours(0, 0, 0, 0);
+        if (!days[isoOf(d)]) { d.setDate(d.getDate() - 1); if (!days[isoOf(d)]) return 0; }
+        var streak = 0;
+        while (days[isoOf(d)]) { streak++; d.setDate(d.getDate() - 1); }
+        return streak;
+      }
+      function doneThisWeek() {
+        var cutoff = Date.now() - 7 * 86400000, n = 0;
+        loadLog().forEach(function (e) { var t = Date.parse(e.at); if (t && t >= cutoff) n++; });
+        return n;
+      }
+
+      // ---- Mutations ---------------------------------------------------------
+      function getTask(id) { for (var i = 0; i < state.tasks.length; i++) if (state.tasks[i].id === id) return state.tasks[i]; return null; }
+      function focusTask() { return state.focusId ? getTask(state.focusId) : null; }
+
+      function markDone(task) {
+        if (task.status !== "done") { task.status = "done"; logCompletion(task); }
+        if (state.focusId === task.id) clearFocus(true);
+        save();
+      }
+      function toggleDone(t) {
+        if (t.status === "done") { t.status = "open"; }
+        else { markDone(t); }
+        save(); render();
+      }
+      function removeTask(t) {
+        if (!confirm("Delete “" + t.project + "”?")) return;
+        state.tasks = state.tasks.filter(function (x) { return x.id !== t.id; });
+        if (state.focusId === t.id) clearFocus(true);
+        save(); render();
+      }
+
+      // Frictionless capture: one line -> a task. Details optional, edit later.
+      function quickAdd(text) {
+        text = (text || "").trim(); if (!text) return;
+        state.tasks.push({ id: uid(), created: Date.now(), project: text, date_received: todayIso(), due_date: null, next_action: "", source: null, status: "open", priority: "normal", notes: null, subtasks: [] });
+        save(); render();
+      }
+
+      // Today shortlist (re-pick each day, MIT-style). A task is "in Today" only for the day it was starred.
+      function isToday(t) { return t.status !== "done" && t.today === todayIso(); }
+      function toggleToday(t) { t.today = isToday(t) ? null : todayIso(); save(); render(); }
+
+      // Aging spotlight: an open task that's getting old or has been nudged a lot.
+      function isDragging(t) {
+        if (t.status === "done") return false;
+        var ageDays = (Date.now() - (t.created || Date.now())) / 86400000;
+        return ageDays >= 5 || (t.nudges || 0) >= 3;
+      }
+
+      // Decide for me: prefer Today, then most urgent; focus it so the check-in loop starts.
+      function pickForMe() {
+        var pool = state.tasks.filter(function (t) { return t.status !== "done"; });
+        if (!pool.length) { alert("No open tasks to pick from — add one first."); return; }
+        var today = pool.filter(isToday);
+        var from = (today.length ? today : pool).slice();
+        from.sort(function (a, b) {
+          var an = !a.due_date ? 1 : 0, bn = !b.due_date ? 1 : 0;
+          if (an !== bn) return an - bn;
+          if (a.due_date && b.due_date && a.due_date !== b.due_date) return a.due_date < b.due_date ? -1 : 1;
+          return 0;
+        });
+        var topN = from.slice(0, Math.min(3, from.length));
+        setFocus(topN[Math.floor(Math.random() * topN.length)]);
+      }
+
+      function buildQuickAdd() {
+        var slot = document.getElementById("quickadd"); if (!slot) return; slot.innerHTML = "";
+        var input = el("input", { type: "text", class: "qa-input", placeholder: "Add a task — type and press Enter", "aria-label": "Quick add a task" });
+        input.addEventListener("keydown", function (e) { if (e.key === "Enter") { quickAdd(input.value); input.value = ""; input.focus(); } });
+        var pick = el("button", { class: "btn btn-outline btn-sm", title: "Pick a task for me to focus on", onclick: pickForMe }, [icon(IC.shuffle), "Pick for me"]);
+        slot.appendChild(el("div", { class: "qa-bar" }, [input, pick]));
+      }
+
+      function openCreate() {
+        state.editingId = null;
+        state.draft = { project: "", date_received: todayIso(), due_date: "", next_action: "", source: "", status: "open", priority: "normal", notes: "", subtasks: [] };
+        state.showForm = true; state.formError = ""; render();
+      }
+      function openEdit(t) {
+        state.editingId = t.id;
+        state.draft = {
+          project: t.project, date_received: t.date_received, due_date: t.due_date || "", next_action: t.next_action,
+          source: t.source || "", status: t.status, priority: t.priority, notes: t.notes || "",
+          subtasks: (t.subtasks || []).map(function (s) { return { id: s.id, text: s.text, done: !!s.done }; }),
+        };
+        state.showForm = true; state.formError = ""; render();
+      }
+      function closeForm() { state.showForm = false; state.editingId = null; state.draft = null; state.formError = ""; render(); }
+
+      function submitForm() {
+        var d = state.draft;
+        if (!d.project.trim() || !d.date_received) {
+          state.formError = "Project and date received are required."; render(); return;
+        }
+        var subtasks = d.subtasks.filter(function (s) { return s.text.trim() !== ""; }).map(function (s) { return { id: s.id || uid(), text: s.text.trim(), done: !!s.done }; });
+        var payload = {
+          project: d.project.trim(), date_received: d.date_received, due_date: d.due_date || null,
+          next_action: d.next_action.trim(), source: d.source.trim() || null,
+          status: d.status, priority: d.priority, notes: d.notes.trim() || null, subtasks: subtasks,
+        };
+        if (state.editingId) {
+          var existing = getTask(state.editingId);
+          var wasDone = existing && existing.status === "done";
+          state.tasks = state.tasks.map(function (t) { return t.id === state.editingId ? Object.assign({}, t, payload) : t; });
+          if (!wasDone && payload.status === "done") { logCompletion(payload); if (state.focusId === state.editingId) clearFocus(true); }
+        } else {
+          state.tasks.push(Object.assign({ id: uid(), created: Date.now() }, payload));
+        }
+        save(); closeForm();
+      }
+
+      function toggleSubtask(task, st) {
+        st.done = !st.done; save();
+        // If all steps are done, gently nudge by re-rendering (the card shows a "mark complete" hint).
+        render();
+      }
+
+      // ---- Focus + check-in loop --------------------------------------------
+      function scheduleNext() { state.checkin.nextAt = Date.now() + state.settings.checkinMins * 60000; state.checkin.snoozeUntil = 0; }
+      function setFocus(task) {
+        state.focusId = task.id; saveFocus();
+        if (task.status === "open") { task.status = "in_progress"; save(); }
+        scheduleNext();
+        try { ensureAudio(); } catch (e) {}
+        render();
+      }
+      function clearFocus(skipRender) {
+        state.focusId = null; saveFocus();
+        state.checkin.modalOpen = false; state.checkin.stuckOpen = false; state.checkin.snoozeOpen = false;
+        stopTitleFlash();
+        if (!skipRender) render();
+      }
+
+      function fireCheckin() {
+        if (state.checkin.modalOpen) return;
+        state.checkin.modalOpen = true; state.checkin.stuckOpen = false; state.checkin.snoozeOpen = false;
+        beep(); startTitleFlash();
+        var t = focusTask();
+        if (t && notifPermission() === "granted") { try { new Notification("Still on it?", { body: t.project + " — " + t.next_action, tag: "checkin" }); } catch (e) {} }
+        renderModal();
+      }
+      function countdownEls() {
+        var els = [document.getElementById("countdown")];
+        if (state.pip.win) { try { els.push(state.pip.win.document.getElementById("pip-countdown")); } catch (e) {} }
+        return els.filter(Boolean);
+      }
+      function tick() {
+        var t = focusTask();
+        var els = countdownEls();
+        if (!t || !state.settings.checkinOn) { els.forEach(function (e) { e.textContent = ""; }); return; }
+        var now = Date.now();
+        if (state.checkin.snoozeUntil && now < state.checkin.snoozeUntil) {
+          els.forEach(function (e) { e.innerHTML = "snoozed · " + fmtRemain(state.checkin.snoozeUntil - now); });
+          return;
+        }
+        if (!state.checkin.modalOpen && now >= state.checkin.nextAt) { fireCheckin(); return; }
+        if (!state.checkin.modalOpen) els.forEach(function (e) { e.innerHTML = 'next check-in in <span class="num">' + fmtRemain(state.checkin.nextAt - now) + "</span>"; });
+      }
+      function fmtRemain(ms) {
+        if (ms < 0) ms = 0; var s = Math.round(ms / 1000); var m = Math.floor(s / 60); s = s % 60;
+        return m + ":" + (s < 10 ? "0" : "") + s;
+      }
+
+      // Check-in responses
+      function ckDone() { var t = focusTask(); if (t) markDone(t); closeModal(); render(); }
+      function ckStillOn() { var t = focusTask(); if (t) { t.nudges = (t.nudges || 0) + 1; save(); } scheduleNext(); closeModal(); }
+      function ckStuckOpen() { state.checkin.stuckOpen = true; state.checkin.snoozeOpen = false; renderModal(); }
+      function ckStuckSave(text) {
+        var t = focusTask();
+        if (t && text.trim()) { t.next_action = text.trim(); save(); }
+        // Re-engage sooner after a reset.
+        state.checkin.nextAt = Date.now() + Math.min(15, state.settings.checkinMins) * 60000;
+        state.checkin.snoozeUntil = 0; closeModal(); render();
+      }
+      function ckSnoozeOpen() { state.checkin.snoozeOpen = true; state.checkin.stuckOpen = false; renderModal(); }
+      function ckSnooze(mins) {
+        var until;
+        if (mins === "tomorrow") { var d = new Date(); d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); until = d.getTime(); }
+        else until = Date.now() + mins * 60000;
+        state.checkin.snoozeUntil = until; state.checkin.nextAt = until; closeModal();
+      }
+      function closeModal() { state.checkin.modalOpen = false; state.checkin.stuckOpen = false; state.checkin.snoozeOpen = false; stopTitleFlash(); renderModal(); }
+      function checkinNow() { if (focusTask()) fireCheckin(); }
+
+      // ---- Attention: sound + title flash -----------------------------------
+      var audioCtx = null;
+      function ensureAudio() { if (!audioCtx) { var AC = window.AudioContext || window.webkitAudioContext; if (AC) audioCtx = new AC(); } if (audioCtx && audioCtx.state === "suspended") audioCtx.resume(); }
+      function beep() {
+        try {
+          ensureAudio(); if (!audioCtx) return;
+          var o = audioCtx.createOscillator(), g = audioCtx.createGain();
+          o.type = "sine"; o.frequency.value = 660; o.connect(g); g.connect(audioCtx.destination);
+          g.gain.setValueAtTime(0.001, audioCtx.currentTime);
+          g.gain.exponentialRampToValueAtTime(0.18, audioCtx.currentTime + 0.02);
+          g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.5);
+          o.start(); o.stop(audioCtx.currentTime + 0.5);
+        } catch (e) {}
+      }
+      function setTitles(s) { document.title = s; if (state.pip.win) { try { state.pip.win.document.title = s; } catch (e) {} } }
+      function startTitleFlash() {
+        if (titleFlash) return; var on = false;
+        titleFlash = setInterval(function () { setTitles((on = !on) ? "⏰ Check in!" : origTitle); }, 800);
+      }
+      function stopTitleFlash() { if (titleFlash) { clearInterval(titleFlash); titleFlash = null; } setTitles(origTitle); }
+
+      // ---- Export / Import ---------------------------------------------------
+      function exportJson() {
+        var blob = new Blob([JSON.stringify(state.tasks, null, 2)], { type: "application/json" });
+        var url = URL.createObjectURL(blob);
+        var a = el("a", { href: url, download: "tasks-" + todayIso() + ".json" });
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+      }
+      function importJson(file) {
+        var reader = new FileReader();
+        reader.onload = function () {
+          var incoming;
+          try { incoming = JSON.parse(String(reader.result)); } catch (e) { alert("That file isn't valid JSON."); return; }
+          if (!Array.isArray(incoming)) { alert("Expected a list of tasks."); return; }
+          var byId = {}; state.tasks.forEach(function (t) { byId[t.id] = t; });
+          var added = 0, updated = 0;
+          incoming.forEach(function (raw) {
+            if (!raw || typeof raw !== "object" || !raw.project) return;
+            var id = raw.id || uid();
+            var clean = {
+              id: id, created: raw.created || Date.now(), project: String(raw.project),
+              date_received: raw.date_received || todayIso(), due_date: raw.due_date || null,
+              next_action: String(raw.next_action || ""), source: raw.source || null,
+              status: statusMeta(raw.status).v, priority: ["low", "normal", "high"].indexOf(raw.priority) >= 0 ? raw.priority : "normal",
+              notes: raw.notes || null,
+              subtasks: Array.isArray(raw.subtasks) ? raw.subtasks.filter(function (s) { return s && s.text; }).map(function (s) { return { id: s.id || uid(), text: String(s.text), done: !!s.done }; }) : [],
+            };
+            if (byId[id]) updated++; else added++;
+            byId[id] = clean;
+          });
+          state.tasks = Object.keys(byId).map(function (k) { return byId[k]; });
+          save(); render();
+          alert("Imported: " + added + " added, " + updated + " updated.");
+        };
+        reader.readAsText(file);
+      }
+
+      // ---- Notifications (best-effort) --------------------------------------
+      function notifSupported() { return typeof window !== "undefined" && "Notification" in window; }
+      function notifPermission() { return notifSupported() ? Notification.permission : "denied"; }
+      function loadNotified() { return readJson(NOTIFIED_KEY, {}); }
+      function saveNotified(s) { writeJson(NOTIFIED_KEY, s); }
+      function fireDueNotifications() {
+        if (notifPermission() !== "granted") return;
+        var today = todayIso(), seen = loadNotified(), changed = false;
+        state.tasks.forEach(function (t) {
+          if (t.status === "done" || !t.due_date || t.due_date > today || seen[t.id] === today) return;
+          try { new Notification(t.due_date < today ? "Task overdue" : "Task due today", { body: t.project + " — " + t.next_action, tag: "task-" + t.id }); seen[t.id] = today; changed = true; } catch (e) {}
+        });
+        if (changed) saveNotified(seen);
+      }
+      function enableReminders() {
+        if (!notifSupported()) { alert("This browser can't show notifications here. The in-app check-in and banner still work."); return; }
+        Notification.requestPermission().then(function () { render(); fireDueNotifications(); });
+      }
+
+      // ---- Sorting -----------------------------------------------------------
+      function sortedTasks() {
+        var arr = state.tasks.slice();
+        arr.sort(function (a, b) {
+          var ad = a.status === "done" ? 1 : 0, bd = b.status === "done" ? 1 : 0;
+          if (ad !== bd) return ad - bd;
+          var an = !a.due_date ? 1 : 0, bn = !b.due_date ? 1 : 0;
+          if (an !== bn) return an - bn;
+          if (a.due_date && b.due_date && a.due_date !== b.due_date) return a.due_date < b.due_date ? -1 : 1;
+          return (a.created || 0) - (b.created || 0);
+        });
+        return arr;
+      }
+
+      // ---- Rendering ---------------------------------------------------------
+      function badge(tone, label, dot) { return el("span", { class: "badge " + tone }, [dot ? el("span", { class: "dot" }) : null, label]); }
+      function subProgress(t) { var n = (t.subtasks || []).length; if (!n) return null; var done = t.subtasks.filter(function (s) { return s.done; }).length; return done + "/" + n + " steps"; }
+
+      function renderHeaderActions() {
+        var slot = document.getElementById("header-actions"); slot.innerHTML = "";
+        var kids = [];
+        if (notifSupported() && notifPermission() === "granted") kids.push(el("span", { class: "badge ok", title: "Browser notifications are on" }, [el("span", { class: "dot" }), "Reminders on"]));
+        else if (notifSupported() && notifPermission() === "denied") kids.push(el("span", { class: "count", title: "Notifications blocked; in-app check-in still works" }, ["Reminders blocked"]));
+        else if (notifSupported()) kids.push(el("button", { class: "btn btn-outline btn-sm", onclick: enableReminders }, [icon(IC.bell), "Enable reminders"]));
+        kids.push(el("button", { class: "btn btn-ghost btn-sm", title: "Export a JSON backup", onclick: exportJson }, [icon(IC.download), "Export"]));
+        kids.push(el("button", { class: "btn btn-ghost btn-sm", title: "Import a JSON backup (merges)", onclick: function () { document.getElementById("import-input").click(); } }, [icon(IC.upload), "Import"]));
+        if (!window.desktopAPI) {
+          if (state.pip.open) kids.push(el("button", { class: "btn btn-outline btn-sm", title: "Close the floating window", onclick: closePip }, [icon(IC.target), "Bring back"]));
+          else kids.push(el("button", { class: "btn btn-ghost btn-sm", title: "Float the tracker on top of other windows", onclick: popOut }, [icon(IC.popout), "Pop out"]));
+        }
+        if (!state.showForm) kids.push(el("button", { class: "btn btn-primary", onclick: openCreate }, [icon(IC.plus), "Add task"]));
+        kids.forEach(function (k) { slot.appendChild(k); });
+      }
+
+      function renderBanner() {
+        var slot = document.getElementById("banner-slot"); slot.innerHTML = "";
+        var overdue = 0, soon = 0;
+        state.tasks.forEach(function (t) { if (t.status === "done") return; var info = dueInfo(t.due_date); if (!info) return; if (info.overdue) overdue++; else if (info.soon) soon++; });
+        if (!overdue && !soon) return;
+        var parts = [];
+        if (overdue) parts.push(el("b", {}, [overdue + (overdue === 1 ? " task overdue" : " tasks overdue")]));
+        if (overdue && soon) parts.push(" · ");
+        if (soon) parts.push(el("b", {}, [soon + " due soon"]));
+        slot.appendChild(el("div", { class: "banner " + (overdue ? "error" : "warn") }, [icon(IC.alert), el("span", {}, parts)]));
+      }
+
+      function renderFocus() {
+        var slot = document.getElementById("focus-slot"); slot.innerHTML = "";
+        var t = focusTask(); if (!t) return;
+        var prog = subProgress(t);
+        var intervalInput = el("input", { type: "number", min: "1", max: "240", value: state.settings.checkinMins });
+        intervalInput.addEventListener("change", function () {
+          var v = Math.max(1, Math.min(240, parseInt(intervalInput.value, 10) || state.settings.checkinMins));
+          state.settings.checkinMins = v; saveSettings(); scheduleNext(); intervalInput.value = v;
+        });
+        var onToggle = el("input", { type: "checkbox" }); onToggle.checked = state.settings.checkinOn;
+        onToggle.addEventListener("change", function () { state.settings.checkinOn = onToggle.checked; saveSettings(); if (state.settings.checkinOn) scheduleNext(); render(); });
+
+        var panel = el("div", { class: "focus" }, [
+          el("div", { class: "focus-label" }, [icon(IC.target), "Focused now"]),
+          el("div", { class: "focus-title" }, [t.project]),
+          el("p", { class: "focus-next" }, [t.next_action]),
+          el("div", { class: "focus-row" }, [
+            state.settings.checkinOn ? el("span", { class: "countdown", id: "countdown" }, [""]) : el("span", { class: "count" }, ["check-ins paused"]),
+            prog ? el("span", { class: "pill-progress" }, [prog]) : null,
+            el("label", { class: "interval-ctl" }, ["every ", intervalInput, " min ", onToggle]),
+            el("div", { class: "focus-controls" }, [
+              el("button", { class: "btn btn-outline btn-sm", onclick: checkinNow }, ["Check in now"]),
+              el("button", { class: "btn btn-ghost btn-sm", onclick: function () { clearFocus(); } }, ["Clear focus"]),
+              el("button", { class: "btn btn-primary btn-sm", onclick: function () { markDone(t); render(); } }, [icon(IC.check), "I'm done"]),
+            ]),
+          ]),
+        ]);
+        slot.appendChild(panel);
+      }
+
+      // Subtask editor row (form)
+      function subtaskRow(container, stObj) {
+        var input = el("input", { type: "text", placeholder: "A small step", value: stObj.text });
+        input.value = stObj.text;
+        input.addEventListener("input", function () { stObj.text = input.value; });
+        var row = el("div", { class: "st-row" }, [
+          input,
+          el("button", { type: "button", class: "btn-icon", title: "Remove step", onclick: function () {
+            state.draft.subtasks = state.draft.subtasks.filter(function (s) { return s !== stObj; });
+            container.removeChild(row);
+          } }, [icon(IC.x)]),
+        ]);
+        return row;
+      }
+
+      function fieldInput(key, type) {
+        var input = el(type === "textarea" ? "textarea" : "input", {});
+        if (type && type !== "textarea") input.type = type;
+        input.value = state.draft[key];
+        input.addEventListener("input", function () { state.draft[key] = input.value; });
+        return input;
+      }
+      function fieldSelect(key, options) {
+        var sel = el("select", {});
+        options.forEach(function (o) { var opt = el("option", { value: o.v }, [o.l]); if (state.draft[key] === o.v) opt.selected = true; sel.appendChild(opt); });
+        sel.addEventListener("change", function () { state.draft[key] = sel.value; });
+        return sel;
+      }
+      function labeled(text, control, colspan) { return el("label", { class: "field" + (colspan ? " col-2" : "") }, [text, control]); }
+
+      function renderForm() {
+        var projectInput = fieldInput("project", "text"); projectInput.placeholder = "e.g. Riverside LiDAR QA";
+        var nextInput = fieldInput("next_action", "text"); nextInput.placeholder = "The very next thing to do";
+        var fromInput = fieldInput("source", "text"); fromInput.placeholder = "Who it came from";
+
+        var stContainer = el("div", { class: "st-editor" }, []);
+        state.draft.subtasks.forEach(function (s) { stContainer.appendChild(subtaskRow(stContainer, s)); });
+        var addStep = el("button", { type: "button", class: "btn btn-ghost btn-sm", onclick: function () {
+          var st = { id: uid(), text: "", done: false }; state.draft.subtasks.push(st);
+          var row = subtaskRow(stContainer, st); stContainer.appendChild(row); var inp = row.querySelector("input"); if (inp) inp.focus();
+        } }, [icon(IC.plus), "Add step"]);
+
+        var form = el("form", { class: "card", onsubmit: function (e) { e.preventDefault(); submitForm(); } }, [
+          el("div", { class: "grid" }, [
+            labeled("Project", projectInput, true),
+            labeled("Next action", nextInput, true),
+            labeled("From", fromInput),
+            labeled("Date received", fieldInput("date_received", "date")),
+            labeled("Due date", fieldInput("due_date", "date")),
+            el("div", { class: "grid" }, [labeled("Priority", fieldSelect("priority", PRIORITY)), labeled("Status", fieldSelect("status", STATUS))]),
+            labeled("Steps (optional checklist)", el("div", {}, [stContainer, addStep]), true),
+            labeled("Notes", fieldInput("notes", "textarea"), true),
+          ]),
+          el("div", { class: "form-hint" }, [state.formError]),
+          el("div", { class: "form-actions" }, [
+            el("button", { type: "button", class: "btn btn-ghost btn-sm", onclick: closeForm }, ["Cancel"]),
+            el("button", { type: "submit", class: "btn btn-primary btn-sm" }, [state.editingId ? "Save changes" : "Add task"]),
+          ]),
+        ]);
+        setTimeout(function () { if (!state.editingId) projectInput.focus(); }, 0);
+        return form;
+      }
+
+      function renderSubtaskList(t) {
+        if (!(t.subtasks || []).length) return null;
+        var allDone = t.subtasks.every(function (s) { return s.done; });
+        var items = t.subtasks.map(function (s) {
+          return el("li", { class: "st-item" + (s.done ? " done" : "") }, [
+            el("button", { class: "st-box" + (s.done ? " on" : ""), title: s.done ? "Uncheck" : "Check", onclick: function () { toggleSubtask(t, s); } }, [icon(IC.check)]),
+            el("span", {}, [s.text]),
+          ]);
+        });
+        var children = items.slice();
+        if (allDone && t.status !== "done") {
+          children.push(el("button", { class: "btn btn-outline btn-sm st-alldone", onclick: function () { markDone(t); render(); } }, [icon(IC.check), "All steps done — mark complete"]));
+        }
+        return el("ul", { class: "st-list" }, children);
+      }
+
+      function renderTask(t) {
+        var done = t.status === "done";
+        var focused = state.focusId === t.id;
+        var info = dueInfo(t.due_date);
+        var cls = "task" + (focused ? " focused" : "") + (done ? " done" : info && info.tone === "error" ? " due-error" : info && info.tone === "warn" ? " due-warn" : "");
+        var sm = statusMeta(t.status);
+        var head = [el("span", { class: "task-title" }, [t.project])];
+        if (focused && !done) head.push(badge("primary", "Focus", true));
+        if (t.priority === "high") head.push(badge("warn", "High"));
+        if (t.priority === "low") head.push(badge("neutral", "Low"));
+        head.push(badge(sm.tone, sm.l, true));
+        if (info && !done) head.push(badge(info.tone, info.label));
+        if (isDragging(t)) head.push(badge("warn", "Dragging"));
+        var prog = subProgress(t);
+        if (prog) head.push(badge("neutral", prog));
+
+        var meta = [];
+        if (t.source) meta.push(el("span", {}, ["From: " + t.source]));
+        meta.push(el("span", {}, ["Received " + fmtDate(t.date_received)]));
+        if (t.due_date) meta.push(el("span", {}, ["Due " + fmtDate(t.due_date)]));
+        if (t.nudges) meta.push(el("span", {}, [t.nudges + " nudge" + (t.nudges === 1 ? "" : "s")]));
+
+        var check = el("button", { class: "check" + (done ? " on" : ""), title: done ? "Mark as not done" : "Mark as done", "aria-pressed": done ? "true" : "false", onclick: function () { toggleDone(t); } }, [icon(IC.check)]);
+
+        var rowActions = [];
+        if (!done) rowActions.push(el("button", { class: "btn-icon" + (isToday(t) ? " today-on" : ""), title: isToday(t) ? "Remove from Today" : "Add to Today", "aria-label": "Toggle Today", onclick: function () { toggleToday(t); } }, [icon(IC.star)]));
+        if (!done) rowActions.push(el("button", { class: "btn-icon" + (focused ? " active" : ""), title: focused ? "This is your focus" : "Focus on this", "aria-label": "Focus on this task", onclick: function () { focused ? clearFocus() : setFocus(t); } }, [icon(IC.target)]));
+        rowActions.push(el("button", { class: "btn-icon", title: "Edit", "aria-label": "Edit task", onclick: function () { openEdit(t); } }, [icon(IC.pencil)]));
+        rowActions.push(el("button", { class: "btn-icon", title: "Delete", "aria-label": "Delete task", onclick: function () { removeTask(t); } }, [icon(IC.trash)]));
+
+        return el("li", { class: cls }, [
+          check,
+          el("div", { class: "task-body" }, [
+            el("div", { class: "task-head" }, head),
+            t.next_action ? el("p", { class: "next" }, [t.next_action]) : null,
+            el("div", { class: "meta" }, meta),
+            renderSubtaskList(t),
+            t.notes ? el("p", { class: "notes" }, [t.notes]) : null,
+          ]),
+          el("div", { class: "row-actions" }, rowActions),
+        ]);
+      }
+
+      function renderStats() {
+        var streak = currentStreak(), week = doneThisWeek();
+        if (!streak && !week) return null;
+        return el("div", { class: "stats" }, [
+          el("span", {}, [el("span", { class: "fire" }, ["🔥 " + streak]), " day streak"]),
+          el("span", {}, [el("span", { class: "done" }, ["✓ " + week]), " done this week"]),
+        ]);
+      }
+
+      function activeDoc() { return state.pip.open && state.pip.win ? state.pip.win.document : document; }
+      function renderModal() {
+        // Clear any existing overlay in both the main and floating documents.
+        [document, state.pip.win && state.pip.win.document].forEach(function (d) {
+          if (!d) return; var o = d.querySelector(".overlay"); if (o && o.parentNode) o.parentNode.removeChild(o);
+        });
+        if (!state.checkin.modalOpen) return;
+        var t = focusTask(); if (!t) { state.checkin.modalOpen = false; return; }
+        var body;
+        if (state.checkin.stuckOpen) {
+          var stuckInput = el("input", { type: "text", placeholder: "What's the smallest next step?" });
+          body = el("div", { class: "ck-sub" }, [
+            el("p", {}, ["No problem — shrink it. What's the one small thing you could do next?"]),
+            el("div", { class: "row" }, [stuckInput, el("button", { class: "btn btn-primary btn-sm", onclick: function () { ckStuckSave(stuckInput.value); } }, ["Save & continue"])]),
+          ]);
+          setTimeout(function () { stuckInput.focus(); }, 0);
+        } else if (state.checkin.snoozeOpen) {
+          body = el("div", { class: "ck-snooze" }, [
+            el("button", { class: "btn btn-outline btn-sm", onclick: function () { ckSnooze(15); } }, ["15 min"]),
+            el("button", { class: "btn btn-outline btn-sm", onclick: function () { ckSnooze(60); } }, ["1 hour"]),
+            el("button", { class: "btn btn-outline btn-sm", onclick: function () { ckSnooze("tomorrow"); } }, ["Tomorrow 9am"]),
+          ]);
+        } else {
+          body = el("div", { class: "ck-actions" }, [
+            el("button", { class: "btn btn-primary", onclick: ckDone }, [icon(IC.check), "Done"]),
+            el("button", { class: "btn btn-outline", onclick: ckStillOn }, ["Still on it"]),
+            el("button", { class: "btn btn-outline", onclick: ckStuckOpen }, ["I'm stuck"]),
+            el("button", { class: "btn btn-ghost", onclick: ckSnoozeOpen }, ["Snooze"]),
+          ]);
+        }
+        var modal = el("div", { class: "modal" }, [
+          el("h2", {}, ["Check-in"]),
+          el("p", {}, ["Still working on ", el("span", { class: "ck-task" }, [t.project]), "?"]),
+          body,
+        ]);
+        // Append into the floating window if it's open, else the main page.
+        activeDoc().body.appendChild(el("div", { class: "overlay" }, [modal]));
+      }
+
+      function render() {
+        renderHeaderActions();
+        renderBanner();
+        renderFocus();
+        var app = document.getElementById("app"); app.innerHTML = "";
+        if (state.pip.open) {
+          app.appendChild(el("div", { class: "banner warn" }, [icon(IC.popout), el("span", {}, ["Floating in a pop-out window. ", el("button", { class: "link-btn", onclick: closePip }, ["Bring back"])])]));
+        }
+        if (state.showForm) app.appendChild(renderForm());
+
+        var stats = renderStats(); if (stats) app.appendChild(stats);
+
+        var all = sortedTasks();
+        var doneCount = all.filter(function (t) { return t.status === "done"; }).length;
+        var todayCount = state.tasks.filter(isToday).length;
+        var draggingCount = state.tasks.filter(isDragging).length;
+
+        var visible;
+        if (state.view === "today") visible = all.filter(isToday);
+        else visible = state.hideCompleted ? all.filter(function (t) { return t.status !== "done"; }) : all;
+
+        var toggle = el("div", { class: "viewtoggle" }, [
+          el("button", { class: "seg" + (state.view === "today" ? " on" : ""), onclick: function () { state.view = "today"; render(); } }, ["Today" + (todayCount ? " · " + todayCount : "")]),
+          el("button", { class: "seg" + (state.view === "all" ? " on" : ""), onclick: function () { state.view = "all"; render(); } }, ["All"]),
+        ]);
+        app.appendChild(el("div", { class: "toolbar" }, [
+          toggle,
+          (state.view === "all" && doneCount) ? el("button", { class: "link-btn", onclick: function () { state.hideCompleted = !state.hideCompleted; render(); } }, [state.hideCompleted ? "Show completed" : "Hide completed"]) : null,
+        ]));
+
+        if (state.view === "all" && draggingCount) {
+          app.appendChild(el("div", { class: "banner warn drag-note" }, [icon(IC.alert), el("span", {}, [draggingCount + (draggingCount === 1 ? " task is" : " tasks are") + " dragging — finish, shrink, or drop."])]));
+        }
+
+        if (visible.length === 0) {
+          if (state.view === "today") {
+            app.appendChild(el("div", { class: "empty" }, [el("p", { style: "margin:0" }, ["No picks for today. Tap the ☆ on 1–3 tasks to plan your day."])]));
+          } else {
+            app.appendChild(el("div", { class: "empty" }, [
+              el("p", { style: "margin:0" }, [state.tasks.length === 0 ? "No tasks yet." : "Nothing outstanding — all caught up."]),
+              state.tasks.length === 0 ? el("button", { class: "btn btn-outline btn-sm", onclick: openCreate }, [icon(IC.plus), "Add your first task"]) : null,
+            ]));
+          }
+        } else {
+          if (state.view === "today" && visible.length > 3) {
+            app.appendChild(el("p", { class: "count", style: "margin:-4px 0 10px" }, ["Today's crowded (" + visible.length + "). Fewer is better — try ≤ 3."]));
+          }
+          app.appendChild(el("ul", { class: "list" }, visible.map(renderTask)));
+        }
+
+        document.getElementById("foot").textContent = "Saved locally in this browser · Pin this tab so check-ins reach you · Export to back up or move computers.";
+        syncPip();
+        renderModal();
+      }
+
+      // ---- Pop-out (Document Picture-in-Picture, with popup fallback) --------
+      function copyStyles(pdoc) {
+        [].forEach.call(document.styleSheets, function (sheet) {
+          try {
+            var css = [].map.call(sheet.cssRules, function (r) { return r.cssText; }).join("\n");
+            pdoc.head.appendChild(el("style", { text: css }));
+          } catch (e) { /* skip unreadable sheets */ }
+        });
+      }
+      function popOut() {
+        if (state.pip.open) return;
+        if (window.documentPictureInPicture && window.isSecureContext) {
+          window.documentPictureInPicture
+            .requestWindow({ width: 360, height: 560 })
+            .then(function (win) {
+              state.pip.win = win; state.pip.open = true;
+              copyStyles(win.document);
+              win.document.title = origTitle;
+              win.document.body.className = "pip-body";
+              var root = win.document.createElement("div"); root.id = "pip-root";
+              win.document.body.appendChild(root);
+              win.addEventListener("pagehide", function () { state.pip.open = false; state.pip.win = null; render(); });
+              render();
+            })
+            .catch(function () { fallbackPopup(); });
+        } else {
+          fallbackPopup();
+        }
+      }
+      function fallbackPopup() {
+        // No Document PiP (Firefox/Safari/older Chrome): open the tracker in its own
+        // small window. It shares localStorage and syncs via the 'storage' listener.
+        var w = window.open(location.href, "tt-popout", "width=380,height=620,menubar=no,toolbar=no,location=no,status=no");
+        if (!w) alert("Pop-out was blocked. Allow pop-ups for this page, then try again.");
+      }
+      function closePip() {
+        if (state.pip.win) { try { state.pip.win.close(); } catch (e) {} }
+        state.pip.open = false; state.pip.win = null; render();
+      }
+      function renderMini(pdoc) {
+        var root = pdoc.getElementById("pip-root"); if (!root) return; root.innerHTML = "";
+        var t = focusTask();
+        if (t) {
+          root.appendChild(el("div", { class: "mini-focus" }, [
+            el("div", { class: "focus-label" }, [icon(IC.target), "Focused"]),
+            el("div", { class: "mini-title" }, [t.project]),
+            el("p", { class: "mini-next" }, [t.next_action]),
+            state.settings.checkinOn ? el("div", { class: "countdown", id: "pip-countdown" }, [""]) : el("div", { class: "count" }, ["check-ins paused"]),
+            el("div", { class: "mini-btns" }, [
+              el("button", { class: "btn btn-outline btn-sm", onclick: checkinNow }, ["Check in"]),
+              el("button", { class: "btn btn-primary btn-sm", onclick: function () { markDone(t); render(); } }, [icon(IC.check), "Done"]),
+              el("button", { class: "btn btn-ghost btn-sm", onclick: function () { clearFocus(); } }, ["Clear"]),
+            ]),
+          ]));
+        } else {
+          root.appendChild(el("div", { class: "mini-empty" }, ["No focus yet — tap the target on a task to start a check-in loop."]));
+        }
+        var open = sortedTasks().filter(function (x) { return x.status !== "done"; });
+        root.appendChild(el("ul", { class: "mini-list" }, open.map(function (x) {
+          var info = dueInfo(x.due_date);
+          var focused = state.focusId === x.id;
+          return el("li", { class: "mini-row" + (focused ? " on" : "") }, [
+            el("button", { class: "check", title: "Mark done", "aria-label": "Mark done", onclick: function () { toggleDone(x); } }, [icon(IC.check)]),
+            el("span", { class: "mini-row-title" }, [x.project]),
+            info && info.tone !== "neutral" ? badge(info.tone, info.label) : null,
+            el("button", { class: "btn-icon" + (focused ? " active" : ""), title: focused ? "Clear focus" : "Focus", "aria-label": "Focus on this task", onclick: function () { focused ? clearFocus() : setFocus(x); } }, [icon(IC.target)]),
+          ]);
+        })));
+      }
+      function syncPip() { if (state.pip.open && state.pip.win) { try { renderMini(state.pip.win.document); } catch (e) {} } }
+
+      // ---- Desktop app (Electron) custom title bar --------------------------
+      function buildAppBar() {
+        var bar = document.getElementById("appbar"); if (!bar) return; bar.innerHTML = "";
+        var minus = '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>';
+        var pin = el("button", { class: "winbtn pinned", title: "Always on top" }, [icon(IC.target)]);
+        function setPinUI(p) { pin.className = "winbtn" + (p ? " pinned" : ""); pin.title = "Always on top (" + (p ? "on" : "off") + ")"; }
+        pin.addEventListener("click", function () { window.desktopAPI.togglePin().then(setPinUI); });
+        if (window.desktopAPI.isPinned) window.desktopAPI.isPinned().then(setPinUI); // reflect real state on load
+        var min = el("button", { class: "winbtn", title: "Minimize", onclick: function () { window.desktopAPI.minimize(); } }, [el("span", { html: minus })]);
+        var close = el("button", { class: "winbtn close", title: "Close", onclick: function () { window.desktopAPI.close(); } }, [icon(IC.x)]);
+        bar.appendChild(el("span", { class: "title" }, ["Task Tracker"]));
+        bar.appendChild(el("span", { class: "spacer" }));
+        bar.appendChild(pin); bar.appendChild(min); bar.appendChild(close);
+      }
+      function initDesktop() {
+        if (!window.desktopAPI) return;
+        document.documentElement.classList.add("is-desktop");
+        buildAppBar();
+      }
+
+      // ---- Boot --------------------------------------------------------------
+      document.getElementById("import-input").addEventListener("change", function (e) { var f = e.target.files && e.target.files[0]; if (f) importJson(f); e.target.value = ""; });
+      // Cross-window sync: if another window (e.g. a popup fallback) changes the data,
+      // reload and re-render — unless we're mid-edit in a form here.
+      window.addEventListener("storage", function (e) {
+        if (state.showForm) return;
+        if ([STORAGE_KEY, FOCUS_KEY, SETTINGS_KEY].indexOf(e.key) >= 0) { load(); if (state.focusId) scheduleNext(); render(); }
+      });
+      load();
+      initDesktop();
+      if (state.tasks.some(isToday)) state.view = "today"; // open into Today if you've planned one
+      buildQuickAdd();
+      if (state.focusId) scheduleNext();
+      render();
+      fireDueNotifications();
+      setInterval(fireDueNotifications, 5 * 60 * 1000);
+      setInterval(tick, 1000);
+
+      // Register the offline service worker when hosted (https/localhost). No-op on file://.
+      if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
+        try { navigator.serviceWorker.register("sw.js"); } catch (e) {}
+      }
+    </script>
+  </body>
+</html>
